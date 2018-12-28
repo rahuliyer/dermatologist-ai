@@ -1,5 +1,7 @@
 import torch
+
 import torch.nn as nn
+import torch.nn.functional as F
 
 import torch.optim as optim
 
@@ -11,6 +13,14 @@ from torch.utils.data import DataLoader
 import sys
 
 import yaml
+
+class TestDataSet(datasets.ImageFolder):
+    def __getitem__(self, index):
+        path, _ = self.imgs[index]
+
+        img, target = super().__getitem__(index)
+
+        return path, img, target
 
 class BaseModel(nn.Module):
     def __init__(self, dataset_root, config):
@@ -104,7 +114,7 @@ class BaseModel(nn.Module):
                                 )
                             )
 
-        self.test_set = datasets.ImageFolder(
+        self.test_set = TestDataSet(
                                 root = self.dataset_root + '/test',
                                 transform = transforms.Compose(
                                     self.transforms
@@ -174,10 +184,35 @@ class BaseModel(nn.Module):
                     total_train_loss = 0.0
 
     def test(self):
-        pass
+        self.model.eval()
 
-    def forward(self, inputs):
-        return self.model(inputs)
+        test_paths = []
+        melanoma_probs = []
+        sk_probs = []
+        for paths, inputs, targets in self.test_loader:
+            inputs, targets = inputs.cuda(), targets.cuda()
+
+            preds = F.softmax(self.model(inputs), dim=1)
+            preds = preds.detach().cpu()
+
+            test_paths.extend(paths)
+            melanoma_probs.extend(preds[:, 0].numpy())
+            sk_probs.extend(preds[:,2].numpy())
+
+        return test_paths, melanoma_probs, sk_probs
+
+    def write_results_csv(self, fname):
+        import csv
+
+        paths, mp, skp = self.test()
+
+        with open(fname, 'w', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+
+            csvwriter.writerow(['Id', 'task_1', 'task_2'])
+
+            for i in range(len(paths)):
+                csvwriter.writerow([paths[i], mp[i], skp[i]])
 
     @staticmethod
     def fromConfig(dataset, config_file):
@@ -198,3 +233,5 @@ if __name__ == "__main__":
 model = BaseModel.fromConfig(sys.argv[1], sys.argv[2])
 model.train()
 #model.test()
+model.write_results_csv(sys.argv[2].split('.')[0] + '.csv')
+
