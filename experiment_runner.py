@@ -65,6 +65,24 @@ class BaseModel(nn.Module):
                     param.requires_grad = False
 
             self.model.fc = nn.Linear(self.model.fc.in_features, 3)
+        elif self.model_name == 'resnet18':
+            from torchvision.models import resnet18
+            self.model = resnet18(pretrained = self.preTrained)
+
+            if self.fineTune == False:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+
+            self.model.fc = nn.Linear(self.model.fc.in_features, 3)
+        elif self.model_name == 'inception_v3':
+            from torchvision.models import inception_v3
+            self.model = inception_v3(pretrained = self.preTrained)
+
+            if self.fineTune == False:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+
+            self.model.fc = nn.Linear(self.model.fc.in_features, 3)
 
         if self.parallel == True and self.device_id != None:
             raise Exception("Both parallel and device specified")
