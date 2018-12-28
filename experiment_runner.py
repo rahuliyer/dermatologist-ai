@@ -11,6 +11,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 
 import sys
+import os
 
 import yaml
 
@@ -215,6 +216,14 @@ class BaseModel(nn.Module):
                 csvwriter.writerow([paths[i], mp[i], skp[i]])
 
     @staticmethod
+    def getResultFileName(experiment_file):
+        filename = os.path.split(experiment_file)[-1]
+
+        output_filename = filename.split('.')[0] + ".csv"
+
+        return os.path.join('results', output_filename)
+
+    @staticmethod
     def fromConfig(dataset, config_file):
         f = open(config_file, "r")
 
@@ -233,5 +242,5 @@ if __name__ == "__main__":
 model = BaseModel.fromConfig(sys.argv[1], sys.argv[2])
 model.train()
 #model.test()
-model.write_results_csv(sys.argv[2].split('.')[0] + '.csv')
+model.write_results_csv(BaseModel.getResultFileName(sys.argv[2]))
 
