@@ -51,7 +51,7 @@ class BaseModel(nn.Module):
             from torchvision.models import vgg16
             self.model = vgg16(pretrained = self.preTrained)
 
-            if self.fineTune == False:
+            if self.preTrained == True and self.fineTune == False:
                 for param in self.model.parameters():
                     param.requires_grad = False
 
@@ -60,16 +60,18 @@ class BaseModel(nn.Module):
             from torchvision.models import resnet152
             self.model = resnet152(pretrained = self.preTrained)
 
-            if self.fineTune == False:
+            if self.preTrained == True and self.fineTune == False:
                 for param in self.model.parameters():
                     param.requires_grad = False
 
             self.model.fc = nn.Linear(self.model.fc.in_features, 3)
         elif self.model_name == 'resnet18':
+            print("Using resnet18 with pretrained: {}".format(self.preTrained))
+
             from torchvision.models import resnet18
             self.model = resnet18(pretrained = self.preTrained)
 
-            if self.fineTune == False:
+            if self.preTrained == True and self.fineTune == False:
                 for param in self.model.parameters():
                     param.requires_grad = False
 
