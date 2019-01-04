@@ -9,13 +9,23 @@ from torchvision import datasets
 from torchvision import transforms
 
 from torch.utils.data import DataLoader
+from torch.utils.data import TensorDataset
+from torch.utils.data.dataset import Dataset
 
 import sys
 import os
 
 import yaml
 
-class TestDataSet(datasets.ImageFolder):
+import numpy as np
+
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import recall_score
+
+from copy import deepcopy
+
+class ImageFolderWithPaths(datasets.ImageFolder):
     def __getitem__(self, index):
         path, _ = self.imgs[index]
 
@@ -23,244 +33,189 @@ class TestDataSet(datasets.ImageFolder):
 
         return path, img, target
 
-class BaseModel(nn.Module):
-    def __init__(self, dataset_root, config):
+class TestDataset(Dataset):
+    def __init__(self, paths, inputs, labels):
         super().__init__()
 
-        self.default_epochs = 100
-        self.default_device_id = 0
-        self.default_batch_size = 64
-        self.default_learning_rate = 0.01
+        self.paths = paths
+        self.inputs = inputs
+        self.labels = labels
 
-        self.config = config
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        return (self.paths[index], self.inputs[index], self.labels[index])
+
+class ExperimentRunner():
+    def __init__(self, 
+            loss_fn,
+            dataset_root,
+            train_transforms,
+            test_transforms,
+            batch_size=64):
+        self.loss_fn = loss_fn
         self.dataset_root = dataset_root
+        self.train_transforms = train_transforms
+        self.test_transforms = test_transforms
+        self.batch_size = batch_size
 
-        self.model_config = self.config.get('model')
-        self.model_name = self.model_config.get('name')
-        self.preTrained = self.model_config.get('preTrained', True)
-        self.fineTune = self.model_config.get('fineTune', False)
+        self.train_loader = None
+        self.valid_loader = None
+        self.test_loader = None
 
-        self.training_config = self.config.get('training')
-        self.num_epochs = self.training_config.get('num_epochs', self.default_epochs)
-        self.batch_size = self.training_config.get('batch_size', self.default_batch_size)
-        self.learning_rate = self.training_config.get('learning_rate', self.default_learning_rate)
-        self.parallel = self.training_config.get('parallel', False)
-        self.device_id = self.training_config.get('device_id')
+        self.best_valid_loss = np.Inf
 
-        if self.model_name == 'vgg16':
-            from torchvision.models import vgg16
-            self.model = vgg16(pretrained = self.preTrained)
+    def getDataLoader(self, path, transform):
+        ds = datasets.ImageFolder(
+                 root = path,
+                 transform = transforms.Compose(
+                     transform
+                 )
+             )
 
-            if self.preTrained == True and self.fineTune == False:
-                for param in self.model.parameters():
-                    param.requires_grad = False
+        dl = DataLoader(ds, self.batch_size)
 
-            self.model.classifier[6] = nn.Linear(self.model.classifier[6].in_features, 3)
-        elif self.model_name == 'resnet152':
-            from torchvision.models import resnet152
-            self.model = resnet152(pretrained = self.preTrained)
+        inputs = torch.tensor([])
+        labels = torch.LongTensor([])
 
-            if self.preTrained == True and self.fineTune == False:
-                for param in self.model.parameters():
-                    param.requires_grad = False
+        for i, l in dl:
+            inputs = torch.cat((inputs, i))
+            labels = torch.cat((labels, l))
 
-            self.model.fc = nn.Linear(self.model.fc.in_features, 3)
-        elif self.model_name == 'resnet18':
-            print("Using resnet18 with pretrained: {}".format(self.preTrained))
+        tds = TensorDataset(inputs, labels)
 
-            from torchvision.models import resnet18
-            self.model = resnet18(pretrained = self.preTrained)
+        return DataLoader(tds,
+                          self.batch_size,
+                          shuffle=True)
 
-            if self.preTrained == True and self.fineTune == False:
-                for param in self.model.parameters():
-                    param.requires_grad = False
+    def getTrainLoader(self):
+        print("Setting up train dataloader")
+        return self.getDataLoader(self.dataset_root + '/train', self.train_transforms)
 
-            self.model.fc = nn.Linear(self.model.fc.in_features, 3)
-        elif self.model_name == 'inception_v3':
-            from torchvision.models import inception_v3
-            self.model = inception_v3(pretrained = self.preTrained)
+    def getValidLoader(self):
+        print("Setting up valid dataloader")
+        return self.getDataLoader(self.dataset_root + '/valid', self.train_transforms)
 
-            if self.fineTune == False:
-                for param in self.model.parameters():
-                    param.requires_grad = False
-
-            self.model.fc = nn.Linear(self.model.fc.in_features, 3)
-
-        if self.parallel == True and self.device_id != None:
-            raise Exception("Both parallel and device specified")
-
-        if self.parallel:
-            print("Parallel set. Using {} GPUs".format(torch.cuda.device_count()))
-            self.model = nn.DataParallel(self.model)
-        else:
-            if self.device_id != None:
-                print("Using device cuda:{}".format(self.device_id))
-            else:
-                print("No device set. Using {}".format(self.default_device))
-                self.device_id = self.default_device_id
-
-            torch.cuda.set_device(self.device_id)
-
-        self.model.cuda()
-
-        self.data_config = self.config['data']
-        self.transforms = []
-        transform_list = self.data_config.get('transforms', [])
-        if 'resize' in transform_list:
-            self.transforms.append(
-                transforms.Resize(
-                    (transform_list['resize']['width'], transform_list['resize']['width'])
+    def getTestLoader(self):
+        print("Setting up test dataloader")
+        ds = ImageFolderWithPaths(
+                root = self.dataset_root + '/test',
+                transform = transforms.Compose(
+                    self.test_transforms
                 )
             )
 
-        self.transforms.append(transforms.ToTensor())
-        self.transforms.append(
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
-        )
+        dl = DataLoader(ds, self.batch_size)
 
-        self.train_set = datasets.ImageFolder(
-                                root = self.dataset_root + '/train',
-                                transform = transforms.Compose(
-                                    self.transforms
-                                )
-                            )
+        inputs = torch.tensor([])
+        labels = torch.LongTensor([])
+        paths = []
+        for p, i, l in dl:
+            paths.extend(p)
+            inputs = torch.cat((inputs, i))
+            labels = torch.cat((labels, l))
 
-        self.valid_set = datasets.ImageFolder(
-                                root = self.dataset_root + '/valid',
-                                transform = transforms.Compose(
-                                    self.transforms
-                                )
-                            )
+        tds = TestDataset(paths, inputs, labels)
 
-        self.test_set = TestDataSet(
-                                root = self.dataset_root + '/test',
-                                transform = transforms.Compose(
-                                    self.transforms
-                                )
-                            )
+        return DataLoader(tds,
+                          self.batch_size,
+                          shuffle=True)
 
-        self.train_loader = DataLoader(self.train_set,
-                                       self.batch_size,
-                                       shuffle=True)
+    def train(self, model, optimizer, num_epochs, print_every=10):
+        cur_best_valid_loss = np.Inf
+        cur_best_model = None
 
-        self.valid_loader = DataLoader(self.valid_set,
-                                       self.batch_size,
-                                       shuffle=True)
+        if self.train_loader == None:
+            self.train_loader = self.getTrainLoader()
 
-        self.test_loader = DataLoader(self.test_set,
-                                       self.batch_size,
-                                       shuffle=True)
+        if self.valid_loader == None:
+            self.valid_loader = self.getValidLoader()
 
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.optimizer = optim.SGD(self.model.parameters(),
-                                   lr = self.learning_rate,
-                                   momentum=0.9)
+        print("Starting training...")
+        model.train()
+        for epoch_nr in range(num_epochs):
+            train_loss = 0.0
+            for batch_idx, (inputs, labels) in enumerate(self.train_loader):
+                optimizer.zero_grad()
 
-    def train(self):
-        print_every = 1
-        for i in range(self.num_epochs):
-            self.model.train()
+                inputs, labels = inputs.cuda(), labels.cuda()
+                preds = model(inputs)
 
-            total_train_loss = 0.0
-            num_train_batches = 1
-            for inputs, targets in self.train_loader:
-                inputs, targets = inputs.cuda(), targets.cuda()
+                loss = self.loss_fn(preds.squeeze(), labels.float())
 
-                self.optimizer.zero_grad()
-
-                preds = self.model(inputs)
-
-                loss = self.loss_fn(preds, targets)
                 loss.backward()
+                optimizer.step()
 
-                self.optimizer.step()
+                train_loss = train_loss + ((1 / (batch_idx + 1)) * (loss.data - train_loss))
 
-                total_train_loss += loss.item()
-                num_train_batches += 1
+                if batch_idx % print_every == 0:
+                    valid_loss = 0.0
+                    model.eval()
+                    for valid_batch_idx, (v_inputs, v_labels) in enumerate(self.valid_loader):
+                        v_inputs, v_labels = v_inputs.cuda(), v_labels.cuda()
 
-                if num_train_batches % print_every == 0:
-                    self.model.eval()
-                    total_valid_loss = 0.0
-                    num_valid_batches = 1
-                    for inputs, targets in self.valid_loader:
-                        inputs, targets = inputs.cuda(), targets.cuda()
-                        preds = self.model(inputs)
+                        preds = model(v_inputs)
 
-                        loss = self.loss_fn(preds, targets)
+                        loss = self.loss_fn(preds.squeeze(), v_labels.float())
+                        
+                        valid_loss = valid_loss + ((1 / (valid_batch_idx + 1)) * (loss.data - valid_loss))
+                    
+                    print("Epoch: {}, batch: {} - Train loss: {}, validation loss: {}".format(epoch_nr, batch_idx, train_loss, valid_loss))
 
-                        total_valid_loss += loss.item()
-                        num_valid_batches += 1
+                    if valid_loss < cur_best_valid_loss:
+                        cur_best_valid_loss = valid_loss
 
-                    print(
-                        "Epoch {}: Average train loss = {}; validation loss: {}".format(
-                            i + 1,
-                            total_train_loss / num_train_batches,
-                            total_valid_loss / num_valid_batches)
-                        )
+                        print("Lowest validation score seen so far. Saving model...")
+                        cur_best_model = deepcopy(model.state_dict())
 
-                    num_train_batches = 1
-                    total_train_loss = 0.0
+                    model.train()
 
-    def test(self):
-        self.model.eval()
+        if cur_best_valid_loss < self.best_valid_loss:
+            self.best_valid_loss = cur_best_valid_loss
+            print("Best model so far; saving...")
+            torch.save(cur_best_model, 'best_model.pt')
+
+        model.load_state_dict(cur_best_model)
+
+        return model
+
+    def test(self, model):
+#        self.model.load_state_dict(torch.load('best_model.pt'))
+
+        model.eval()
 
         test_paths = []
+        labels = []
         melanoma_probs = []
-        sk_probs = []
+
+        if self.test_loader == None:
+            self.test_loader = self.getTestLoader()
+
         for paths, inputs, targets in self.test_loader:
             inputs, targets = inputs.cuda(), targets.cuda()
 
-            preds = F.softmax(self.model(inputs), dim=1)
+            preds = model(inputs)
+
             preds = preds.detach().cpu()
 
             test_paths.extend(paths)
-            melanoma_probs.extend(preds[:, 0].numpy())
-            sk_probs.extend(preds[:,2].numpy())
+            melanoma_probs.extend(preds.numpy())
+            labels.extend(targets.cpu().numpy())
 
-        return test_paths, melanoma_probs, sk_probs
+        return test_paths, labels, melanoma_probs
 
-    def write_results_csv(self, fname):
-        import csv
+    def accuracy(self, model):
+        paths, labels, preds = self.test(model)
 
-        paths, mp, skp = self.test()
+        return accuracy_score(labels, np.round(preds))
 
-        with open(fname, 'w', newline='') as csvfile:
-            csvwriter = csv.writer(csvfile)
+    def confusion_matrix(self, model):
+        paths, labels, preds = self.test(model)
 
-            csvwriter.writerow(['Id', 'task_1', 'task_2'])
+        return confusion_matrix(labels, np.round(preds))
 
-            for i in range(len(paths)):
-                csvwriter.writerow([paths[i], mp[i], skp[i]])
+    def recall_score(self, model):
+        paths, labels, preds = self.test(model)
 
-    @staticmethod
-    def getResultFileName(experiment_file):
-        filename = os.path.split(experiment_file)[-1]
-
-        output_filename = filename.split('.')[0] + ".csv"
-
-        return os.path.join('results', output_filename)
-
-    @staticmethod
-    def fromConfig(dataset, config_file):
-        f = open(config_file, "r")
-
-        config = yaml.load(f.read())
-
-        return BaseModel(dataset, config)
-
-def usage(cmd):
-    print("Usage: {} <dataset folder> <experiment config>".format(cmd))
-    sys.exit(-1)
-
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        usage(sys.argv[0])
-
-model = BaseModel.fromConfig(sys.argv[1], sys.argv[2])
-model.train()
-#model.test()
-model.write_results_csv(BaseModel.getResultFileName(sys.argv[2]))
-
+        return recall_score(labels, np.round(preds))
