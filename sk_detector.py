@@ -99,15 +99,14 @@ if __name__ == "__main__":
 
     runner = ExperimentRunner( 
             loss_fn,
-            'melanoma_dataset', 
+            'sk_dataset', 
             train_transforms,
             test_transforms,
             batch_size=64)
 
-    ensemble_preds = np.array([])
     num_ensembles = 5
     for e in range(num_ensembles):
-        for i in [9]:#[num_layers for num_layers in range(2, 10)]:
+        for i in [num_layers for num_layers in range(2, 10)]:
             for lr in [0.00001]:
                 for j in [200]:
                     print("Model #{}: Training {} layers for {} epochs with lr={}...".format(
@@ -134,28 +133,3 @@ if __name__ == "__main__":
 
                     from sklearn.metrics import roc_auc_score
                     print("roc auc score: {}".format(roc_auc_score(labels, np.round(probs))))
-                    if len(ensemble_preds) == 0:
-                        ensemble_preds = np.array(probs)
-                    else:
-                        ensemble_preds += np.array(probs)
-    #                false_positives = torch.tensor([])
-    #                false_negatives = torch.tensor([])
-    #                for idx in range(len(probs)):
-    #                    pred = np.round(probs[idx])
-    #
-    #                    if pred != labels[idx]:
-    #                        img = load_image(paths[idx], transform)
-    #                        if pred == 0 and labels[idx] == 1:
-    #                            false_negatives = torch.cat((false_negatives, img.unsqueeze(dim=0)))
-    #                        elif pred == 1 and labels[idx] == 0:
-    #                            false_positives = torch.cat((false_positives, img.unsqueeze(dim=0)))
-    #
-                            #print("{}: {} {} {} {}".format(idx, paths[idx], np.round(probs[idx]), labels[idx], probs[idx]))
-    #                save_image(make_grid(false_positives), 'false_positives.jpg')
-    #                save_image(make_grid(false_negatives), 'false_negatives.jpg')
-    ensemble_preds = ensemble_preds / num_ensembles
-
-    print("Confusion matrix:\n {}".format(confusion_matrix(labels, np.round(ensemble_preds))))
-    print("recall: {}".format(recall_score(labels, np.round(ensemble_preds))))
-    print("precision: {}".format(precision_score(labels, np.round(ensemble_preds))))
-    print("Ensemble roc: {}".format(roc_auc_score(labels, np.round(ensemble_preds))))
