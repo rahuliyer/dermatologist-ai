@@ -50,13 +50,15 @@ class TestDataset(Dataset):
 class ExperimentRunner():
     def __init__(self,
             loss_fn,
-            dataset_root,
+            train_dataset_root,
+            test_dataset_root,
             train_transforms,
             test_transforms,
             batch_size=64,
             savefile='best_model.pt'):
         self.loss_fn = loss_fn
-        self.dataset_root = dataset_root
+        self.train_dataset_root = train_dataset_root
+        self.test_dataset_root = test_dataset_root
         self.train_transforms = train_transforms
         self.test_transforms = test_transforms
         self.batch_size = batch_size
@@ -94,16 +96,16 @@ class ExperimentRunner():
 
     def getTrainLoader(self):
         print("Setting up train dataloader")
-        return self.getDataLoader(self.dataset_root + '/train', self.train_transforms)
+        return self.getDataLoader(self.train_dataset_root + '/train', self.train_transforms)
 
     def getValidLoader(self):
         print("Setting up valid dataloader")
-        return self.getDataLoader(self.dataset_root + '/valid', self.train_transforms)
+        return self.getDataLoader(self.train_dataset_root + '/valid', self.train_transforms)
 
     def getTestLoader(self):
         print("Setting up test dataloader")
         ds = ImageFolderWithPaths(
-                root = self.dataset_root + '/test',
+                root = self.test_dataset_root + '/test',
                 transform = transforms.Compose(
                     self.test_transforms
                 )

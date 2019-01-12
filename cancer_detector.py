@@ -103,7 +103,7 @@ def get_test_transforms():
 
     return test_transforms
 
-def train_model(dataset_dir, savefile):
+def get_predictions(train_dir, test_dir, savefile):
     loss_fn = nn.BCELoss()
     num_layers_to_train = 9
 
@@ -111,7 +111,8 @@ def train_model(dataset_dir, savefile):
 
     runner = ExperimentRunner(
             loss_fn,
-            dataset_dir,
+            train_dir,
+            test_dir,
             get_train_transforms(),
             get_test_transforms(),
             batch_size=64,
@@ -133,20 +134,8 @@ def train_model(dataset_dir, savefile):
 
         model = runner.train(model, optimizer, num_epochs)
 
-def get_predictions(test_dataset_dir, model_savefiles):
-    runner = ExperimentRunner(
-            None,
-            test_dataset_dir,
-            get_train_transforms(),
-            get_test_transforms()
-    )
-
-    model = get_model(0)
-
-    probs = {}
-    for i, savefile in enumerate(model_savefiles):
-        model.load_state_dict(torch.load(savefile))
-        paths, labels, probs[i] = runner.test(model)
+    model.load_state_dict(torch.load(savefile))
+    paths, labels, probs = runner.test(model)
 
     return paths, labels, probs
 
@@ -162,18 +151,19 @@ def write_results_csv(fname, paths, m_probs, sk_probs):
             csvwriter.writerow([paths[i], m_probs[i], sk_probs[i]])
 
 if __name__ == "__main__":
-    #train_model('melanoma_dataset', 'best_melanoma_model.pt')
-    #train_model('sk_dataset', 'best_sk_model.pt')
-
-    paths, labels, probs = get_predictions(
+    paths, labels, m_probs = get_predictions(
+        'melanoma_dataset',
         'data',
-        [
-            'best_melanoma_model.pt',
-            'best_sk_model.pt'
-        ]
+        'best_melanoma_model.pt'
     )
 
-write_results_csv('model_results.csv', paths, probs[0], probs[1])
+    paths, labels, sk_probs = get_predictions(
+        'sk_dataset',
+        'data',
+        'best_sk_model.pt'
+    )
+
+write_results_csv('model_results.csv', paths, m_probs, sk_probs)
 
 '''
     from sklearn.metrics import accuracy_score
