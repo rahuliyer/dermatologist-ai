@@ -48,12 +48,13 @@ class TestDataset(Dataset):
         return (self.paths[index], self.inputs[index], self.labels[index])
 
 class ExperimentRunner():
-    def __init__(self, 
+    def __init__(self,
             loss_fn,
             dataset_root,
             train_transforms,
             test_transforms,
-            batch_size=64):
+            batch_size=64,
+            savefile='best_model.pt'):
         self.loss_fn = loss_fn
         self.dataset_root = dataset_root
         self.train_transforms = train_transforms
@@ -65,6 +66,8 @@ class ExperimentRunner():
         self.test_loader = None
 
         self.best_valid_loss = np.Inf
+
+        self.savefile = savefile
 
     def getDataLoader(self, path, transform):
         ds = datasets.ImageFolder(
@@ -158,9 +161,9 @@ class ExperimentRunner():
                         preds = model(v_inputs)
 
                         loss = self.loss_fn(preds.squeeze(), v_labels.float())
-                        
+
                         valid_loss = valid_loss + ((1 / (valid_batch_idx + 1)) * (loss.data - valid_loss))
-                    
+
                     print("Epoch: {}, batch: {} - Train loss: {}, validation loss: {}".format(epoch_nr, batch_idx, train_loss, valid_loss))
 
                     if valid_loss < cur_best_valid_loss:
@@ -174,7 +177,7 @@ class ExperimentRunner():
         if cur_best_valid_loss < self.best_valid_loss:
             self.best_valid_loss = cur_best_valid_loss
             print("Best model so far; saving...")
-            torch.save(cur_best_model, 'best_model.pt')
+            torch.save(cur_best_model, self.savefile)
 
         model.load_state_dict(cur_best_model)
 
@@ -187,7 +190,7 @@ class ExperimentRunner():
 
         test_paths = []
         labels = []
-        melanoma_probs = []
+        probs = []
 
         if self.test_loader == None:
             self.test_loader = self.getTestLoader()
@@ -200,10 +203,10 @@ class ExperimentRunner():
             preds = preds.detach().cpu()
 
             test_paths.extend(paths)
-            melanoma_probs.extend(preds.numpy())
+            probs.extend(preds.numpy().squeeze())
             labels.extend(targets.cpu().numpy())
 
-        return test_paths, labels, melanoma_probs
+        return test_paths, labels, probs
 
     def accuracy(self, model):
         paths, labels, preds = self.test(model)
