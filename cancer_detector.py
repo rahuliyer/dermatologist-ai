@@ -118,9 +118,9 @@ def train_model(train_dir, test_dir, savefile):
             get_test_transforms(),
             batch_size=64)
 
-    num_models_to_train = 1
+    num_models_to_train = 5
     lr = 0.00001
-    num_epochs = 2
+    num_epochs = 200
     best_roc_auc = 0.0
     for i in range(num_models_to_train):
         print("Model #{}: Training {} layers for {} epochs with lr={}...".format(

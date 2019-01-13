@@ -119,8 +119,7 @@ class ExperimentRunner():
         tds = TestDataset(paths, inputs, labels)
 
         return DataLoader(tds,
-                          self.batch_size,
-                          shuffle=True)
+                          self.batch_size)
 
     def train(self, model, optimizer, num_epochs, print_every=10):
         cur_best_valid_loss = np.Inf
