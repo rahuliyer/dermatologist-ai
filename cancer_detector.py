@@ -108,8 +108,6 @@ def get_test_transforms():
 def train_model(train_dir, test_dir, savefile):
     loss_fn = nn.BCELoss()
 
-    model = get_model(NUM_LAYERS_TO_TRAIN)
-
     runner = ExperimentRunner(
             loss_fn,
             train_dir,
@@ -130,6 +128,8 @@ def train_model(train_dir, test_dir, savefile):
                 lr
             )
         )
+
+        model = get_model(NUM_LAYERS_TO_TRAIN)
 
         optimizer = optim.SGD(model.module.parameters(), lr=lr, momentum=0.9)
 
