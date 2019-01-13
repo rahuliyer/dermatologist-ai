@@ -31,6 +31,8 @@ from sklearn.metrics import recall_score
 from sklearn.metrics import precision_score
 from sklearn.metrics import roc_auc_score
 
+NUM_LAYERS_TO_TRAIN = 9
+
 def get_model(num_layers_to_train):
     model = resnet50(pretrained=True)
 
@@ -103,11 +105,10 @@ def get_test_transforms():
 
     return test_transforms
 
-def get_predictions(train_dir, test_dir, savefile):
+def train_model(train_dir, test_dir, savefile):
     loss_fn = nn.BCELoss()
-    num_layers_to_train = 9
 
-    model = get_model(num_layers_to_train)
+    model = get_model(NUM_LAYERS_TO_TRAIN)
 
     runner = ExperimentRunner(
             loss_fn,
@@ -115,16 +116,16 @@ def get_predictions(train_dir, test_dir, savefile):
             test_dir,
             get_train_transforms(),
             get_test_transforms(),
-            batch_size=64,
-            savefile=savefile)
+            batch_size=64)
 
     num_models_to_train = 1
     lr = 0.00001
     num_epochs = 2
+    best_roc_auc = 0.0
     for i in range(num_models_to_train):
         print("Model #{}: Training {} layers for {} epochs with lr={}...".format(
                 i,
-                num_layers_to_train,
+                NUM_LAYERS_TO_TRAIN,
                 num_epochs,
                 lr
             )
@@ -134,8 +135,32 @@ def get_predictions(train_dir, test_dir, savefile):
 
         model = runner.train(model, optimizer, num_epochs)
 
-    model.load_state_dict(torch.load(savefile))
-    paths, labels, probs = runner.test(model)
+        paths, labels, probs = runner.test(model)
+        roc_auc = roc_auc_score(labels, probs)
+
+        print("ROC auc: {}".format(roc_auc))
+
+        if roc_auc > best_roc_auc:
+            best_roc_auc = roc_auc
+
+            print("Best model so far; saving...")
+            torch.save(model.state_dict(), savefile)
+
+def get_predictions(test_dir, model_savefiles):
+    runner = ExperimentRunner(
+            None,
+            None,
+            test_dir,
+            None,
+            get_test_transforms(),
+            batch_size=64)
+
+    probs = {}
+    for i, savefile in enumerate(model_savefiles):
+        model = get_model(NUM_LAYERS_TO_TRAIN)
+
+        model.load_state_dict(torch.load(savefile))
+        paths, labels, probs[i] = runner.test(model)
 
     return paths, labels, probs
 
@@ -151,19 +176,27 @@ def write_results_csv(fname, paths, m_probs, sk_probs):
             csvwriter.writerow([paths[i], m_probs[i], sk_probs[i]])
 
 if __name__ == "__main__":
-    paths, labels, m_probs = get_predictions(
+    train_model(
         'melanoma_dataset',
-        'data',
+        'melanoma_dataset',
         'best_melanoma_model.pt'
     )
 
-    paths, labels, sk_probs = get_predictions(
+    train_model(
         'sk_dataset',
-        'data',
+        'sk_dataset',
         'best_sk_model.pt'
     )
 
-write_results_csv('model_results.csv', paths, m_probs, sk_probs)
+    paths, labels, probs = get_predictions(
+        'data',
+        [
+            'best_melanoma_model.pt',
+            'best_sk_model.pt'
+        ]
+    )
+
+write_results_csv('model_results.csv', paths, probs[0], probs[1])
 
 '''
     from sklearn.metrics import accuracy_score

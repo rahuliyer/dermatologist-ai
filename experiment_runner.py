@@ -54,8 +54,7 @@ class ExperimentRunner():
             test_dataset_root,
             train_transforms,
             test_transforms,
-            batch_size=64,
-            savefile='best_model.pt'):
+            batch_size=64):
         self.loss_fn = loss_fn
         self.train_dataset_root = train_dataset_root
         self.test_dataset_root = test_dataset_root
@@ -66,10 +65,6 @@ class ExperimentRunner():
         self.train_loader = None
         self.valid_loader = None
         self.test_loader = None
-
-        self.best_valid_loss = np.Inf
-
-        self.savefile = savefile
 
     def getDataLoader(self, path, transform):
         ds = datasets.ImageFolder(
@@ -175,11 +170,6 @@ class ExperimentRunner():
                         cur_best_model = deepcopy(model.state_dict())
 
                     model.train()
-
-        if cur_best_valid_loss < self.best_valid_loss:
-            self.best_valid_loss = cur_best_valid_loss
-            print("Best model so far; saving...")
-            torch.save(cur_best_model, self.savefile)
 
         model.load_state_dict(cur_best_model)
 
