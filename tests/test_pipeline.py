@@ -172,8 +172,8 @@ class BaselineScoreTests(unittest.TestCase):
         merged = truth.merge(pred, on="Id", suffixes=("_t", "_p"))
         category_1 = roc_auc_score(merged["task_1_t"], merged["task_1_p"])
         category_2 = roc_auc_score(merged["task_2_t"], merged["task_2_p"])
-        self.assertAlmostEqual(category_1, 0.79, delta=0.02)
-        self.assertAlmostEqual(category_2, 0.88, delta=0.02)
+        self.assertAlmostEqual(category_1, 0.827, delta=0.01)
+        self.assertAlmostEqual(category_2, 0.922, delta=0.01)
 
 
 if __name__ == "__main__":
