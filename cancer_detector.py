@@ -1,12 +1,4 @@
-"""Train binary melanoma and seborrheic-keratosis detectors for ISIC 2017.
-
-The original training code had several issues that limited ROC-AUC:
-- Random augmentations were applied once, then cached in a TensorDataset
-- The classifier stacked Linear layers with no nonlinearities
-- Checkpoints were chosen with train-time flips on the validation set
-- Class imbalance was handled by duplicating files on disk
-- SGD used a tiny LR on a randomly initialized head plus the backbone
-"""
+"""Train binary melanoma and seborrheic-keratosis detectors for ISIC 2017."""
 
 from __future__ import print_function
 
