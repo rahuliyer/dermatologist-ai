@@ -1,12 +1,26 @@
 import itertools
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+import os
 import sys
 
+import numpy as np
+import pandas as pd
+
+if not os.environ.get("DISPLAY"):
+    import matplotlib
+    matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, confusion_matrix
 
-def plot_roc_auc(y_true, y_pred):
+
+def _column_values(frame, columns):
+    subset = frame[list(columns)]
+    if hasattr(subset, "to_numpy"):
+        return subset.to_numpy()
+    return subset.values
+
+
+def plot_roc_auc(y_true, y_pred, save_path=None):
     """
     This function plots the ROC curves and provides the scores.
     """
@@ -15,7 +29,7 @@ def plot_roc_auc(y_true, y_pred):
     fpr = dict()
     tpr = dict()
     roc_auc = np.zeros(3)
-    
+
     # prepare for figure
     plt.figure()
     colors = ['aqua', 'cornflowerblue']
@@ -23,15 +37,15 @@ def plot_roc_auc(y_true, y_pred):
     # for both classification tasks (categories 1 and 2)
     for i in range(2):
         # obtain ROC curve
-        fpr[i], tpr[i], _ = roc_curve(y_true[:,i], y_pred[:,i])
+        fpr[i], tpr[i], _ = roc_curve(y_true[:, i], y_pred[:, i])
         # obtain ROC AUC
         roc_auc[i] = auc(fpr[i], tpr[i])
         # plot ROC curve
         plt.plot(fpr[i], tpr[i], color=colors[i], lw=2,
-                 label='ROC curve for task {d} (area = {f:.2f})'.format(d=i+1, f=roc_auc[i]))
+                 label='ROC curve for task {d} (area = {f:.2f})'.format(d=i + 1, f=roc_auc[i]))
     # get score for category 3
     roc_auc[2] = np.average(roc_auc[:2])
-    
+
     # format figure
     plt.plot([0, 1], [0, 1], 'k--', lw=2)
     plt.xlim([0.0, 1.0])
@@ -40,24 +54,31 @@ def plot_roc_auc(y_true, y_pred):
     plt.ylabel('True Positive Rate')
     plt.title('ROC curves')
     plt.legend(loc="lower right")
-    plt.show()
-    
+    if save_path:
+        plt.savefig(save_path, bbox_inches="tight")
+    try:
+        plt.show()
+    except Exception:
+        pass
+
     # print scores
     for i in range(3):
-        print('Category {d} Score: {f:.3f}'. format(d=i+1, f=roc_auc[i]))
+        print('Category {d} Score: {f:.3f}'.format(d=i + 1, f=roc_auc[i]))
+    return roc_auc
 
-def plot_confusion_matrix(y_true, y_pred, thresh, classes):
+
+def plot_confusion_matrix(y_true, y_pred, thresh, classes, save_path=None):
     """
     This function plots the (normalized) confusion matrix.
     """
 
     # obtain class predictions from probabilities
-    y_pred = (y_pred>=thresh)*1
+    y_pred = (y_pred >= thresh) * 1
     # obtain (unnormalized) confusion matrix
     cm = confusion_matrix(y_true, y_pred)
     # normalize confusion matrix
     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    
+
     plt.figure()
     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
     plt.title('Confusion matrix')
@@ -75,26 +96,32 @@ def plot_confusion_matrix(y_true, y_pred, thresh, classes):
     plt.tight_layout()
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, bbox_inches="tight")
+    try:
+        plt.show()
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
 
     preds_path = sys.argv[1]
-    if len(sys.argv)==3:
+    if len(sys.argv) == 3:
         thresh = float(sys.argv[2])
     else:
         thresh = 0.5
 
     # get ground truth labels for test dataset
     truth = pd.read_csv('ground_truth.csv')
-    y_true = truth.as_matrix(columns=["task_1", "task_2"])
+    y_true = _column_values(truth, ["task_1", "task_2"])
 
     # get model predictions for test dataset
     y_pred = pd.read_csv(preds_path)
-    y_pred = y_pred.as_matrix(columns=["task_1", "task_2"])
+    y_pred = _column_values(y_pred, ["task_1", "task_2"])
 
     # plot ROC curves and print scores
-    plot_roc_auc(y_true, y_pred)
+    plot_roc_auc(y_true, y_pred, save_path="roc_curves.png")
     # plot confusion matrix
     classes = ['benign', 'malignant']
-    plot_confusion_matrix(y_true[:,0], y_pred[:,0], thresh, classes)
+    plot_confusion_matrix(y_true[:, 0], y_pred[:, 0], thresh, classes, save_path="confusion_matrix.png")
