@@ -13,6 +13,16 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, confusion_matrix
 
 
+def _finish_plot(save_path):
+    if save_path:
+        plt.savefig(save_path, bbox_inches="tight")
+    backend = (plt.get_backend() or "").lower()
+    if "agg" in backend:
+        plt.close()
+    else:
+        plt.show()
+
+
 def _column_values(frame, columns):
     subset = frame[list(columns)]
     if hasattr(subset, "to_numpy"):
@@ -54,12 +64,7 @@ def plot_roc_auc(y_true, y_pred, save_path=None):
     plt.ylabel('True Positive Rate')
     plt.title('ROC curves')
     plt.legend(loc="lower right")
-    if save_path:
-        plt.savefig(save_path, bbox_inches="tight")
-    try:
-        plt.show()
-    except Exception:
-        pass
+    _finish_plot(save_path)
 
     # print scores
     for i in range(3):
@@ -96,12 +101,7 @@ def plot_confusion_matrix(y_true, y_pred, thresh, classes, save_path=None):
     plt.tight_layout()
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
-    if save_path:
-        plt.savefig(save_path, bbox_inches="tight")
-    try:
-        plt.show()
-    except Exception:
-        pass
+    _finish_plot(save_path)
 
 
 if __name__ == "__main__":
