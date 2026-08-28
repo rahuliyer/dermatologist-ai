@@ -92,16 +92,14 @@ Your file should have exactly 3 columns:
 - `task_1` - the model's predicted probability that the image (at the path in `Id`) depicts melanoma
 - `task_2` - the model's predicted probability that the image (at the path in `Id`) depicts seborrheic keratosis
 
-Once the CSV file is obtained, you will use the `get_results.py` file to score your submission.  To set up the environment to run this file, you need to create (and activate) an environment with Python 3.5 and a few pip-installable packages:
+Once the CSV file is obtained, you will use the `get_results.py` file to score your submission.  Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and sync the project environment:
 ```text
-conda create --name derm-ai python=3.5
-source activate derm-ai
-pip install -r requirements.txt
+uv sync
 ```
 
 Once you have set up the environment, run the following command to see how the sample submission performed:
 ```text
-python get_results.py sample_predictions.csv
+uv run python get_results.py sample_predictions.csv
 ```
 
 Check the terminal output for the scores obtained in the three categories:
@@ -118,7 +116,7 @@ The corresponding **ROC curves** appear in a pop-up window, along with the **con
 
 The code for generating the confusion matrix assumes that the threshold for classifying melanoma is set to 0.5.  To change this threshold, you need only supply an additional command-line argument when calling the `get_results.py` file.  For instance, to set the threshold at 0.4, you need only run:
 ```text
-python get_results.py sample_predictions.csv 0.4
+uv run python get_results.py sample_predictions.csv 0.4
 ```
 
 To test **your own** submission, change the code to instead include the path to **your** CSV file.

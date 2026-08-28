@@ -1,0 +1,20 @@
+[project]
+name = "dermatologist-ai"
+version = "0.1.0"
+description = "ISIC 2017 lesion diagnosis: melanoma vs. nevus vs. seborrheic keratosis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pillow>=10.4",
+    "scikit-learn>=1.5",
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "tqdm>=4.66",
+]
+
+[tool.uv]
+package = false
