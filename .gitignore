@@ -1,3 +1,7 @@
 .DS_Store
+.cache/
 .venv/
+__pycache__/
 data/
+data-archives/
+outputs/

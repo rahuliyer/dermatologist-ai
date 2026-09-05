@@ -1,19 +1,78 @@
 # dermatologist-ai
 
-## Introduction ##
-This uses Resnet50 to solve the Task 3 - lesion diagnosis - of the ISIC challenge. The details of the project can be found in the [PROJECT_README.md](https://github.com/rahuliyer/dermatologist-ai/blob/master/PROJECT_README.md).
+ResNet-50 transfer learning for the lesion-diagnosis task from the 2017 ISIC
+Challenge. The project trains separate binary classifiers for melanoma and
+seborrheic keratosis and writes challenge-format probabilities.
 
-## Instructions ##
-1. Install the project dependencies with [uv](https://docs.astral.sh/uv/):
-```
+## Setup
+
+Install the locked Python environment with [uv](https://docs.astral.sh/uv/):
+
+```bash
 uv sync
 ```
 
-2. Get the [training data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/train.zip), [validaton data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/valid.zip), and [test data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/test.zip) and place them in `data/train`, `data/valid`, and `data/test` directories respectively.
+Download the [training data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/train.zip),
+[validation data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/valid.zip),
+and [test data](https://s3-us-west-1.amazonaws.com/udacity-dlnfd/datasets/skin-cancer/test.zip).
+Extract them into this layout:
 
-3. Since there are two separate models - one for melanoma and one for seborrheic keratosis - and the datasets are imabalanced, run `make_datasets.sh` to create the balanced datasets for each model. The datasets are balanced by upsampling.
-
-4. Start training in the managed environment:
+```text
+data/
+├── train/
+│   ├── melanoma/
+│   ├── nevus/
+│   └── seborrheic_keratosis/
+├── valid/
+│   └── ...
+└── test/
+    └── ...
 ```
+
+No copied or upsampled dataset is needed. The training loader balances each
+binary task with weighted sampling.
+
+## Training
+
+Train both classifiers with the defaults (20 epochs, mixed precision, and all
+visible CUDA devices):
+
+```bash
 uv run python -u cancer_detector.py
 ```
+
+For a short end-to-end run:
+
+```bash
+uv run python -u cancer_detector.py --epochs 1
+```
+
+Use `--help` for batch size, worker count, fine-tuning depth, task selection,
+and other controls. On a multi-GPU host the model automatically uses PyTorch
+`DataParallel`.
+
+## Results
+
+A training run on September 4, 2026 used two NVIDIA RTX 2080 GPUs, PyTorch
+2.14.0 with CUDA 13.0, batch size 64, mixed precision, ImageNet-pretrained
+ResNet-50 weights, and the default optimizer settings. Early stopping selected
+the lowest-validation-loss epoch for each task.
+
+| Task | Best epoch | Validation loss | Test ROC AUC |
+| --- | ---: | ---: | ---: |
+| Melanoma | 3 | 0.39596 | 0.83339 |
+| Seborrheic keratosis | 12 | 0.30722 | 0.90946 |
+| Mean | — | — | 0.87143 |
+
+The generated CSV contains all 600 test predictions. The repository's previous
+`model_results.csv` scores 0.835 mean ROC AUC with the updated evaluator.
+
+Checkpoints and `model_results.csv` are written to `outputs/`. The CSV can be
+scored with:
+
+```bash
+uv run python get_results.py outputs/model_results.csv
+```
+
+See [PROJECT_README.md](PROJECT_README.md) for the original project and
+challenge background.

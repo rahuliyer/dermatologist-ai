@@ -1,213 +1,236 @@
-import torch
+"""Train melanoma and seborrheic-keratosis classifiers."""
 
-import torch.nn as nn
-import torch.nn.functional as F
+from __future__ import annotations
 
-import torch.optim as optim
-
-from torchvision import datasets
-from torchvision import transforms
-from torchvision.utils import make_grid
-from torchvision.utils import save_image
-
-from torch.utils.data import DataLoader
-
-import sys
+import argparse
+import csv
 import os
-
-import yaml
+import random
+from pathlib import Path
 
 import numpy as np
+import torch
+from sklearn.metrics import roc_auc_score
+from torch import nn, optim
+from torchvision import transforms
+from torchvision.models import ResNet50_Weights, resnet50
 
 from experiment_runner import ExperimentRunner
 
-from torchvision.models import resnet50
+TASKS = {
+    "melanoma": "melanoma",
+    "sk": "seborrheic_keratosis",
+}
 
-import PIL
 
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import recall_score
-from sklearn.metrics import precision_score
-from sklearn.metrics import roc_auc_score
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-NUM_LAYERS_TO_TRAIN = 9
 
-def get_model(num_layers_to_train):
-    model = resnet50(pretrained=True)
+def get_device(requested: str) -> torch.device:
+    if requested == "auto":
+        requested = "cuda" if torch.cuda.is_available() else "cpu"
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested, but PyTorch cannot access a CUDA device"
+        )
+    return torch.device(requested)
 
+
+def get_model(
+    trainable_layers: int,
+    device: torch.device,
+    *,
+    pretrained: bool = True,
+) -> nn.Module:
+    weights = ResNet50_Weights.DEFAULT if pretrained else None
+    model = resnet50(weights=weights)
     model.fc = nn.Sequential(
-            nn.Linear(model.fc.in_features, 1024),
-            nn.Linear(1024, 512),
-            nn.Linear(512, 1),
-            nn.Sigmoid()
+        nn.Dropout(p=0.3),
+        nn.Linear(model.fc.in_features, 512),
+        nn.ReLU(inplace=True),
+        nn.Dropout(p=0.2),
+        nn.Linear(512, 1),
     )
 
-    for l in model.fc.children():
-        if l.__class__.__name__ == 'Linear':
-            nn.init.normal_(l.weight, mean=0, std=(1.0 / np.sqrt(l.in_features)))
+    layers = list(model.children())
+    trainable_layers = max(1, min(trainable_layers, len(layers)))
+    for layer in layers[:-trainable_layers]:
+        for parameter in layer.parameters():
+            parameter.requires_grad = False
 
-    layers = [layer for layer in model.children()]
-    num_untrained_layers = len(layers) - num_layers_to_train
-
-    for i, layer in enumerate(layers):
-        if i < num_untrained_layers:
-            for param in layer.parameters():
-                param.requires_grad = False
-        else:
-            for param in layer.parameters():
-                param.requires_grad = True
-
-    model = nn.DataParallel(model)
-    model.cuda()
-
+    model = model.to(device)
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        print(f"Using DataParallel across {torch.cuda.device_count()} GPUs")
+        model = nn.DataParallel(model)
     return model
 
-def load_image(path, transform):
-    from PIL import Image
-
-    img = Image.open(path)
-    tf = transforms.Compose(transform)
-
-    tensor = tf(img)
-
-    return tensor
 
 def get_train_transforms():
-    train_transforms = []
-    train_transforms.append(transforms.Resize((1024, 768)))
-    train_transforms.append(transforms.CenterCrop((512, 512)))
-    train_transforms.append(transforms.Resize((224, 224)))
-    train_transforms.append(transforms.RandomHorizontalFlip())
-    train_transforms.append(transforms.RandomVerticalFlip())
-    train_transforms.append(transforms.ToTensor())
-    train_transforms.append(
+    return [
+        transforms.RandomResizedCrop(224, scale=(0.75, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(20),
+        transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
-    )
+            std=[0.229, 0.224, 0.225],
+        ),
+    ]
 
-    return train_transforms
 
 def get_test_transforms():
-    test_transforms = []
-    test_transforms.append(transforms.Resize((1024, 768)))
-    test_transforms.append(transforms.CenterCrop((512, 512)))
-    test_transforms.append(transforms.Resize((224, 224)))
-    test_transforms.append(transforms.ToTensor())
-    test_transforms.append(
+    return [
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
+            std=[0.229, 0.224, 0.225],
+        ),
+    ]
+
+
+def unwrap_model(model: nn.Module) -> nn.Module:
+    return model.module if isinstance(model, nn.DataParallel) else model
+
+
+def train_task(args, task: str, device: torch.device):
+    positive_class = TASKS[task]
+    ensemble_probs = []
+    test_paths = None
+    test_labels = None
+    best_valid_loss = float("inf")
+    best_checkpoint = args.output_dir / f"best_{task}_model.pt"
+
+    for model_number in range(1, args.models + 1):
+        model_seed = args.seed + model_number - 1
+        seed_everything(model_seed)
+        print(
+            f"\n{task}: model {model_number}/{args.models}, epochs={args.epochs}, "
+            f"lr={args.learning_rate:g}, trainable_layers={args.trainable_layers}"
         )
-    )
-
-    return test_transforms
-
-def train_model(train_dir, test_dir, savefile):
-    loss_fn = nn.BCELoss()
-
-    runner = ExperimentRunner(
-            loss_fn,
-            train_dir,
-            test_dir,
+        runner = ExperimentRunner(
+            nn.BCEWithLogitsLoss(),
+            args.data_dir,
+            args.data_dir,
             get_train_transforms(),
             get_test_transforms(),
-            batch_size=64)
-
-    num_models_to_train = 5
-    lr = 0.00001
-    num_epochs = 200
-    best_roc_auc = 0.0
-    for i in range(num_models_to_train):
-        print("Model #{}: Training {} layers for {} epochs with lr={}...".format(
-                i,
-                NUM_LAYERS_TO_TRAIN,
-                num_epochs,
-                lr
-            )
+            positive_class=positive_class,
+            batch_size=args.batch_size,
+            workers=args.workers,
+            device=device,
+            seed=model_seed,
+            amp=not args.no_amp,
         )
-
-        model = get_model(NUM_LAYERS_TO_TRAIN)
-
-        optimizer = optim.SGD(model.module.parameters(), lr=lr, momentum=0.9)
-
-        model = runner.train(model, optimizer, num_epochs)
-
+        model = get_model(
+            args.trainable_layers,
+            device,
+            pretrained=not args.no_pretrained,
+        )
+        optimizer = optim.AdamW(
+            (parameter for parameter in model.parameters() if parameter.requires_grad),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+        )
+        model = runner.train(model, optimizer, args.epochs, patience=args.patience)
         paths, labels, probs = runner.test(model)
-        roc_auc = roc_auc_score(labels, probs)
+        auc = roc_auc_score(labels, probs)
+        print(f"{task}: test ROC AUC={auc:.5f}")
+        ensemble_probs.append(np.asarray(probs))
+        test_paths, test_labels = paths, labels
 
-        print("ROC auc: {}".format(roc_auc))
+        if (
+            runner.best_valid_loss is not None
+            and runner.best_valid_loss < best_valid_loss
+        ):
+            best_valid_loss = runner.best_valid_loss
+            torch.save(
+                {
+                    "task": task,
+                    "positive_class": positive_class,
+                    "state_dict": {
+                        name: tensor.detach().cpu()
+                        for name, tensor in unwrap_model(model).state_dict().items()
+                    },
+                    "validation_loss": best_valid_loss,
+                    "test_roc_auc": auc,
+                    "seed": model_seed,
+                },
+                best_checkpoint,
+            )
+            print(f"Saved {best_checkpoint}")
 
-        if roc_auc > best_roc_auc:
-            best_roc_auc = roc_auc
+    return test_paths, test_labels, np.mean(ensemble_probs, axis=0)
 
-            print("Best model so far; saving...")
-            torch.save(model.state_dict(), savefile)
 
-def get_predictions(test_dir, model_savefiles):
-    runner = ExperimentRunner(
-            None,
-            None,
-            test_dir,
-            None,
-            get_test_transforms(),
-            batch_size=64)
+def write_results_csv(path: Path, image_paths, melanoma_probs, sk_probs) -> None:
+    with path.open("w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Id", "task_1", "task_2"])
+        for image_path, melanoma_prob, sk_prob in zip(
+            image_paths, melanoma_probs, sk_probs, strict=True
+        ):
+            writer.writerow([image_path, melanoma_prob, sk_prob])
 
-    probs = {}
-    for i, savefile in enumerate(model_savefiles):
-        model = get_model(NUM_LAYERS_TO_TRAIN)
 
-        model.load_state_dict(torch.load(savefile))
-        paths, labels, probs[i] = runner.test(model)
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, default=Path("data"))
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    parser.add_argument("--task", choices=["both", *TASKS], default="both")
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--models", type=int, default=1, help="Models per task")
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--trainable-layers", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
+    parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--no-pretrained", action="store_true")
+    args = parser.parse_args(argv)
+    if args.epochs < 1 or args.models < 1 or args.batch_size < 1:
+        parser.error("epochs, models, and batch-size must all be positive")
+    return args
 
-    return paths, labels, probs
 
-def write_results_csv(fname, paths, m_probs, sk_probs):
-    import csv
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    device = get_device(args.device)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    print(
+        f"PyTorch {torch.__version__}; device={device}; GPUs={torch.cuda.device_count()}"
+    )
 
-    with open(fname, 'w', newline='') as csvfile:
-        csvwriter = csv.writer(csvfile)
+    selected_tasks = list(TASKS) if args.task == "both" else [args.task]
+    results = {}
+    paths_by_task = {}
+    for task in selected_tasks:
+        paths, _, probabilities = train_task(args, task, device)
+        paths_by_task[task] = paths
+        results[task] = probabilities
 
-        csvwriter.writerow(['Id', 'task_1', 'task_2'])
+    if args.task == "both":
+        if paths_by_task["melanoma"] != paths_by_task["sk"]:
+            raise RuntimeError("Task test loaders produced different image ordering")
+        results_path = args.output_dir / "model_results.csv"
+        write_results_csv(
+            results_path,
+            paths_by_task["melanoma"],
+            results["melanoma"],
+            results["sk"],
+        )
+        print(f"Wrote {results_path}")
+    return 0
 
-        for i in range(len(paths)):
-            csvwriter.writerow([paths[i], m_probs[i], sk_probs[i]])
 
 if __name__ == "__main__":
-    train_model(
-        'melanoma_dataset',
-        'melanoma_dataset',
-        'best_melanoma_model.pt'
-    )
-
-    train_model(
-        'sk_dataset',
-        'sk_dataset',
-        'best_sk_model.pt'
-    )
-
-    paths, labels, probs = get_predictions(
-        'data',
-        [
-            'best_melanoma_model.pt',
-            'best_sk_model.pt'
-        ]
-    )
-
-write_results_csv('model_results.csv', paths, probs[0], probs[1])
-
-'''
-    from sklearn.metrics import accuracy_score
-    print("Accuracy: {}".format(runner.test(model)))
-    from sklearn.metrics import confusion_matrix
-    print("Confusion matrix:\n {}".format(confusion_matrix(labels, np.round(probs))))
-    from sklearn.metrics import recall_score
-    print("recall: {}".format(recall_score(labels, np.round(probs))))
-    from sklearn.metrics import precision_score
-    print("precision: {}".format(precision_score(labels, np.round(probs))))
-
-    from sklearn.metrics import roc_auc_score
-    print("roc auc score: {}".format(roc_auc_score(labels, np.round(probs))))
-'''
+    raise SystemExit(main())
